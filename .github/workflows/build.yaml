@@ -1,0 +1,207 @@
+
+name: 'Build Application'
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Choose Environment to deploy"
+        required: true
+        default: 'test'
+        type: choice
+        options:
+          - test
+          - live
+
+  push:
+    branches: ["test"]
+    paths:
+      - 'app/**'
+
+  workflow_run:
+    workflows: ["Promote to Test"]
+    types:
+      - completed
+    branches: ["dev"]
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  detect-changes:
+    name: Detect Application Changes
+    runs-on: ubuntu-latest
+
+    if: |
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success'
+      )
+
+    outputs:
+      application: ${{ steps.changes.outputs.application }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.environment == 'live' && 'live' || 'test' }}
+
+      - name: Detect changes
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            application:
+              - 'app/**'
+
+  test:
+    name: Test Application
+    needs: detect-changes
+
+    if: |
+      (
+        github.event_name == 'push' ||
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event_name == 'workflow_run' &&
+          github.event.workflow_run.conclusion == 'success'
+        )
+      ) &&
+      (
+        needs.detect-changes.outputs.application == 'true' ||
+        github.event_name == 'workflow_dispatch'
+      )
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.environment == 'live' && 'live' || 'test' }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest
+
+  build:
+    name: Build & Push Image
+    needs:
+      - detect-changes
+      - test
+
+    if: |
+      (
+        github.event_name == 'push' ||
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event_name == 'workflow_run' &&
+          github.event.workflow_run.conclusion == 'success'
+        )
+      ) &&
+      (
+        needs.detect-changes.outputs.application == 'true' ||
+        github.event_name == 'workflow_dispatch'
+      )
+
+    runs-on: ubuntu-latest
+
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.environment == 'live' && 'live' || 'test' }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_ACTIONS_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Determine environment
+        id: environment
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            ENVIRONMENT="${{ inputs.environment }}"
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_run" ]]; then
+            ENVIRONMENT="test"
+          else
+            ENVIRONMENT="${GITHUB_REF_NAME}"
+          fi
+
+          case "$ENVIRONMENT" in
+            test)
+              REPOSITORY="devops-demo-staging"
+              ;;
+            live)
+              REPOSITORY="devops-demo-production"
+              ;;
+            *)
+              echo "Invalid deployment environment: $ENVIRONMENT"
+              exit 1
+              ;;
+          esac
+
+          echo "environment=$ENVIRONMENT" >> "$GITHUB_OUTPUT"
+          echo "repository=$REPOSITORY" >> "$GITHUB_OUTPUT"
+
+      - name: Set image
+        id: image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          REPOSITORY: ${{ steps.environment.outputs.repository }}
+        run: |
+          IMAGE="${REGISTRY}/${REPOSITORY}:${GITHUB_SHA}"
+
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "Building: $IMAGE"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app
+          push: false
+          load: true
+          platforms: linux/amd64
+          tags: ${{ steps.image.outputs.image }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.image.outputs.image }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
+      - name: Push image
+        run: |
+          docker push "${{ steps.image.outputs.image }}"

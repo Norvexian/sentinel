@@ -1,0 +1,85 @@
+name: Promote to Live
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  promote-to-live:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Promote test → live
+        env:
+          BOT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin test live --prune --force
+          git checkout live
+
+          LIVE_COMMIT_COUNT=$(git rev-list --count HEAD)
+
+          IGNORE_PATTERNS=$(cat <<EOF | tr '\n' '|' | sed 's/|$//'
+          ^\\.github/workflows/
+          node_modules/
+          \\.next/
+          out/
+          dist/
+          build/
+          \\.vite/
+          __pycache__/
+          \\.pytest_cache/
+          \\.venv/
+          venv/
+          env/
+          \\.env
+          \\.env\\.
+          .*\\.log$
+          coverage/
+          htmlcov/
+          \\.coverage
+          .*\\.sqlite3$
+          \\.DS_Store
+          \\.idea/
+          \\.vscode/
+          .*\\.pyc$
+          .*\\.pyo$
+          EOF
+          )
+
+          mapfile -d '' FILES_TO_MERGE < <(git ls-tree -r origin/test --name-only -z | grep -z -vE "$IGNORE_PATTERNS")
+
+          git diff --name-only --diff-filter=D -z origin/live..origin/test | \
+            grep -z -vE "$IGNORE_PATTERNS" | \
+            xargs -0 -r git rm -f
+
+          if [ ${#FILES_TO_MERGE[@]} -gt 0 ]; then
+            printf '%s\0' "${FILES_TO_MERGE[@]}" | xargs -0 -I {} git checkout origin/test -- "{}"
+          fi
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "No changes to promote. Skipping commit and push."
+            exit 0
+          fi
+
+          if [ "$LIVE_COMMIT_COUNT" -le 1 ]; then
+            echo "Bootstrapping live from test"
+            git commit -m "chore(release): bootstrap live from test"
+          else
+            echo "Merging test → live"
+            git commit -m "chore(release): merge test into live"
+          fi
+
+          git push https://x-access-token:${BOT_TOKEN}@github.com/${GITHUB_REPOSITORY}.git live

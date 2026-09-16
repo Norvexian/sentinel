@@ -1,0 +1,64 @@
+name: Revert Direct Pushes to Protected Branches
+
+on:
+  push:
+    branches:
+      - live
+      - test
+
+permissions:
+  contents: write
+
+concurrency:
+  group: protect-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  protect:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Stop if this is a GitHub Actions bot
+        if: github.actor == 'github-actions[bot]'
+        run: |
+          echo "Bot-triggered push detected; skipping."
+          exit 0
+
+      - name: Revert unauthorized push
+        env:
+          BOT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH_NAME="${GITHUB_REF_NAME}"
+          BEFORE_SHA="${{ github.event.before }}"
+          AFTER_SHA="${{ github.sha }}"
+
+          echo "Checking for unauthorized push on $BRANCH_NAME"
+          echo "Previous commit: $BEFORE_SHA"
+          echo "Current commit : $AFTER_SHA"
+
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git clone https://x-access-token:${BOT_TOKEN}@github.com/${GITHUB_REPOSITORY}.git repo
+          cd repo
+
+          git fetch origin "$BRANCH_NAME"
+          git checkout "$BRANCH_NAME"
+
+          CURRENT_REMOTE=$(git rev-parse origin/"$BRANCH_NAME")
+
+          if [ "$CURRENT_REMOTE" != "$AFTER_SHA" ]; then
+            echo "Branch has changed since this workflow started."
+            echo "Expected: $AFTER_SHA"
+            echo "Current : $CURRENT_REMOTE"
+            echo "Skipping revert to avoid overwriting newer commits."
+            exit 0
+          fi
+
+          echo "Resetting branch to $BEFORE_SHA"
+          git reset --hard "$BEFORE_SHA"
+
+          git push \
+            https://x-access-token:${BOT_TOKEN}@github.com/${GITHUB_REPOSITORY}.git \
+            "$BRANCH_NAME" \
+            --force

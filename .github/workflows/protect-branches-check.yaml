@@ -1,0 +1,21 @@
+name: Enforce PRs to Dev Only
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+jobs:
+  validate-target-branch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check PR target branch
+        run: |
+          TARGET_BRANCH="${{ github.event.pull_request.base.ref }}"
+          ALLOWED_BRANCH="dev"
+
+          if [ "$TARGET_BRANCH" != "$ALLOWED_BRANCH" ]; then
+            echo "Pull requests can only target the '$ALLOWED_BRANCH' branch."
+            echo "Current target branch: $TARGET_BRANCH"
+            exit 1
+          fi

@@ -1,0 +1,73 @@
+#!/bin/sh
+
+###############################################
+# CONFIGURATION
+###############################################
+
+MAIN_REPO="Norvexian/sentinel"
+PROTECTED_BRANCHES="dev test live"
+
+remote_name="$1"
+remote_url=$(git remote get-url "$remote_name" 2>/dev/null || echo "")
+
+origin_url=$(git remote get-url origin 2>/dev/null || echo "")
+upstream_url=$(git remote get-url upstream 2>/dev/null || echo "")
+
+###############################################
+# BLOCK PUSHES TO MAIN REPO
+###############################################
+
+if echo "$remote_url" | grep -q "$MAIN_REPO"; then
+  cat <<EOF
+
+======================================================================
+  BLOCKED: Direct pushes to the MAIN repository are NOT ALLOWED
+======================================================================
+You are pushing to the official main repo:
+  $remote_url
+
+All development must happen in your personal fork.
+
+Correct workflow:
+  1. Fork $MAIN_REPO
+  2. Clone YOUR fork
+  3. Create feature branches there
+  4. Open Pull Requests → dev
+
+Emergency bypass (only repo owner):
+  git push --no-verify $remote_name ...
+
+======================================================================
+
+EOF
+  exit 1
+fi
+
+###############################################
+# BLOCK PUSHES TO PROTECTED BRANCHES
+###############################################
+
+current_branch=$(git rev-parse --abbrev-ref HEAD)
+
+for branch in $PROTECTED_BRANCHES; do
+  if [ "$current_branch" = "$branch" ]; then
+    cat <<EOF
+
+======================================================================
+  BLOCKED: '$branch' is a protected branch
+======================================================================
+Direct pushes or PRs targeting this branch are NOT allowed.
+
+Create a feature branch instead:
+  git checkout -b feature/<name>
+
+Then open a PR → dev
+
+======================================================================
+
+EOF
+    exit 1
+  fi
+done
+
+exit 0

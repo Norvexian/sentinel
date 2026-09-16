@@ -1,0 +1,88 @@
+name: Promote to Test
+
+on:
+  push:
+    branches:
+      - dev
+
+permissions:
+  contents: write
+
+jobs:
+  promote-to-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Promote dev → test
+        env:
+          BOT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin test live --prune --force
+          git checkout test
+
+          TEST_COMMIT_COUNT=$(git rev-list --count HEAD)
+          IGNORE_PATTERNS=$(cat <<EOF | tr '\n' '|' | sed 's/|$//'
+          ^\\.github/workflows/
+          node_modules/
+          \\.next/
+          out/
+          dist/
+          build/
+          \\.vite/
+          __pycache__/
+          \\.pytest_cache/
+          \\.venv/
+          venv/
+          env/
+          \\.env
+          \\.env\\.
+          .*\\.log$
+          coverage/
+          htmlcov/
+          \\.coverage
+          \\.pytest_cache/
+          .*\\.sqlite3$
+          \\.DS_Store
+          \\.idea/
+          \\.vscode/
+          *.pyc
+          *.pyo
+          __pycache__/
+          EOF
+          )
+
+          mapfile -d '' FILES_TO_MERGE < <(git ls-tree -r origin/dev --name-only -z | grep -z -vE "$IGNORE_PATTERNS")
+
+          git diff --name-only --diff-filter=D -z origin/test..origin/dev | \
+            grep -z -vE "$IGNORE_PATTERNS" | \
+            xargs -0 -r git rm -f
+
+          if [ ${#FILES_TO_MERGE[@]} -gt 0 ]; then
+            printf '%s\0' "${FILES_TO_MERGE[@]}" | xargs -0 -I {} git checkout origin/dev -- "{}"
+          fi
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "No changes to promote. Skipping commit and push."
+            exit 0
+          fi
+
+          if [ "$TEST_COMMIT_COUNT" -le 1 ]; then
+            echo "Bootstrapping test from dev"
+            git commit -m "chore(release): bootstrap test from dev"
+          else
+            echo "Merging dev → test"
+            git commit -m "chore(release): merge dev into test"
+          fi
+          
+          git push https://x-access-token:${BOT_TOKEN}@github.com/${GITHUB_REPOSITORY}.git test
