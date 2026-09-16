@@ -1,10 +1,10 @@
 import os
-from uuid import uuid4
 from unittest.mock import patch
+from uuid import uuid4
 
+import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
-import pytest
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///./test.db")
 

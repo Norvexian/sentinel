@@ -1,4 +1,3 @@
-from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -9,7 +8,7 @@ class HealthResponse(BaseModel):
 
 
 class Post(BaseModel):
-    id: Optional[UUID] = None
+    id: UUID | None = None
     title: str
     description: str
 

@@ -1,11 +1,9 @@
-from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-
 from database.connection import get_db
+from fastapi import APIRouter, Depends, HTTPException, status
 from schemas.models import DeletePostResponse, Post, UpdatePost
+from sqlalchemy.orm import Session
 from utils.post_crud import (
     post_create,
     post_delete,
@@ -22,7 +20,7 @@ def create_post(post: Post, db: Session = Depends(get_db)):
     return post_create(db=db, post=post)
 
 
-@router.get("/list/all", status_code=status.HTTP_200_OK, response_model=List[Post])
+@router.get("/list/all", status_code=status.HTTP_200_OK, response_model=list[Post])
 def get_all_posts(db: Session = Depends(get_db)):
     return posts_get_all(db=db)
 
