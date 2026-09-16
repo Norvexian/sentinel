@@ -179,6 +179,8 @@ jobs:
           LATEST="${REGISTRY}/${REPOSITORY}:latest"
 
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+
           echo "Building: $IMAGE"
 
       - name: Set up Docker Buildx
