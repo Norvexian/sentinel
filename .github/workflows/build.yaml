@@ -124,6 +124,7 @@ jobs:
 
     outputs:
       image: ${{ steps.image.outputs.image }}
+      latest: ${{ steps.image.outputs.latest }}
 
     steps:
       - name: Checkout
@@ -175,6 +176,7 @@ jobs:
           REPOSITORY: ${{ steps.environment.outputs.repository }}
         run: |
           IMAGE="${REGISTRY}/${REPOSITORY}:${GITHUB_SHA}"
+          LATEST="${REGISTRY}/${REPOSITORY}:latest"
 
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
           echo "Building: $IMAGE"
@@ -189,7 +191,9 @@ jobs:
           push: false
           load: true
           platforms: linux/amd64
-          tags: ${{ steps.image.outputs.image }}
+          tags: |
+            ${{ steps.image.outputs.image }}
+            ${{ steps.image.outputs.latest }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -205,3 +209,4 @@ jobs:
       - name: Push image
         run: |
           docker push "${{ steps.image.outputs.image }}"
+          docker push "${{ steps.image.outputs.latest }}"
